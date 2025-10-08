@@ -1,6 +1,6 @@
 # Importance of Systolic Blood Pressure in MHOWS as an Evaluation of Lofexidine Efficacy  
 ### Duke Department of Statistical Science – Undergraduate Research in Statistics Workshop (Summer 2024)
-### Project collaborators + mentoring listed on finalpaper.pdf
+### Project mentored by Professor Elijah Meyer & student collaborators Noah O., Caroline Z., and Erin K. 
 
 ## Overview  
 This project was completed as part of Duke University’s **Undergraduate Research in Statistics Workshop**, a two-week mentored research experience organized by the **Department of Statistical Science** through the **Trinity Research Enhancement Grant**.  
