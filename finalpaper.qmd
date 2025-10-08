@@ -1,0 +1,1091 @@
+---
+title: "Importance of Systolic Blood Pressure in MHOWS as an Evaluation of Lofexidine Efficacy"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  pdf:
+    margin-top: 1in
+    margin-bottom: 1in  
+    margin-left: 1in
+    margin-right: 1in
+    includes:
+      in-header: header.tex
+execute: 
+  warning: false
+  message: false
+  echo: false
+editor: visual
+prefer-html: true
+---
+
+This study investigates the efficacy of lofexidine, an alpha-2-adrenergic receptor agonist, in treating opioid withdrawal symptoms using the Modified Himmelsbach Opiate Withdrawal Scale (MHOWS). Conducted as a Phase 3 Placebo-Controlled clinical trial with 68 opioid-dependent participants, the study measured MHOWS scores on day 5. Data cleaning ensured proper encoding of variables and addressed missing values. Results indicated that including systolic blood pressure in MHOWS calculations significantly influenced outcomes, with lofexidine showing a reduction in MHOWS scores compared to placebo. However, excluding blood pressure revealed an increase in MHOWS scores for the lofexidine group, suggesting its primary impact is on blood pressure reduction rather than comprehensive symptom alleviation. These findings highlight the need for combined therapies targeting a broader range of symptoms for effective opioid withdrawal management. Further research should focus on long-term effects and integration with other treatments.
+
+\pagebreak
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(skimr)
+library(patchwork)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+
+IMC13 <- read.csv("archive/data/CSV/IMC13.csv") 
+IMC14 <- read.csv("archive/data/CSV/IMC14.csv")
+new <- inner_join(IMC13, IMC14, by = "PATIENT")
+
+#| labels: discontinuous variables
+new <- new %>%  
+  mutate(
+    Yawning = ifelse(Q1.x == 1, 1, 0),
+    Lacrimation = ifelse(Q2.x == 1, 1, 0),
+    Rhinorrhea = ifelse(Q3.x == 1, 1, 0),
+    Perspiration = ifelse(Q4.x == 1, 1, 0),
+    Tremor = ifelse(Q5.x == 1, 3, 0),
+    Goose_flesh = ifelse(Q6.x == 1, 3, 0),
+    Restlessness = ifelse(Q7.x == 1, 5, 0),
+    Anorexia = ifelse(!is.na(Q8A) & Q8A == 1 | !is.na(Q8B) & Q8B == 1 | !is.na(Q8C) & Q8C == 1, 3, 0),
+    Emesis_Score = case_when(
+      sum(across(starts_with("Q"), ~ ifelse(!is.na(.), 1, 0)), na.rm = TRUE) == 0 ~ 0,
+      sum(across(starts_with("Q"), ~ ifelse(!is.na(.), 1, 0)), na.rm = TRUE) == 1 ~ 5,
+      sum(across(starts_with("Q"), ~ ifelse(!is.na(.), 1, 0)), na.rm = TRUE) == 2 ~ 10,
+      sum(across(starts_with("Q"), ~ ifelse(!is.na(.), 1, 0)), na.rm = TRUE) > 2 ~ 15
+    )  
+)
+```
+
+```{r}
+#| labels: continuous variables
+baseline <- new |> 
+  group_by(PATIENT) |>
+  reframe(
+    BaselinePupil = mean(Q9_2HR[STDYDAY.x %in% 1:2], na.rm = TRUE),
+    BaselineTemp = mean(Q11.x [STDYDAY.x %in% 1:2], na.rm = TRUE),
+    BaselineRespiration = mean(Q12RES[STDYDAY.x %in% 1:2], na.rm = TRUE),
+    BaselineSYS = mean(Q12SYS[STDYDAY.x %in% 1:2], na.rm =TRUE),
+    BaselineWeight = Q10.x[STDYDAY.x == 2]
+  )
+```
+
+```{r}
+#| label: left joining the baseline
+new <- new |>
+left_join(baseline, by = "PATIENT")
+```
+
+```{r}
+#| label: MHOWS calculation 
+new <- new |>
+
+#COMPARING TO BASELINE
+mutate(
+    PupilDilationScore = (Q9_2HR - BaselinePupil)*10,
+    TempScore = (Q11.x - BaselineTemp) *10,
+    RespirationScore = (Q12RES - BaselineRespiration),
+    SYSScore = pmin((Q12SYS - BaselineSYS) / 2,15),
+    WeightScore = BaselineWeight - Q10.x, 
+    ) |>
+
+#if the score is negative, score is set to 0 
+mutate(
+    PupilDilationScore = pmax(PupilDilationScore, 0),
+    TempScore = pmax(TempScore, 0),
+    RespirationScore = pmax(RespirationScore, 0),
+    SYSScore = pmax(SYSScore, 0),
+    WeightScore = pmax(WeightScore, 0)
+) |>
+
+#total MHOWS calculated
+mutate (
+TotalMHOWS = Yawning + Lacrimation + Rhinorrhea + Perspiration + Tremor + Restlessness + Anorexia + Emesis_Score + PupilDilationScore + TempScore + RespirationScore + WeightScore
+) |>
+mutate(
+TotalMHOWS_BP = Yawning + Lacrimation + Rhinorrhea + Perspiration + Tremor + Restlessness + Anorexia + Emesis_Score + PupilDilationScore + TempScore + RespirationScore + WeightScore + SYSScore
+)
+
+```
+
+```{r}
+#| label: rearrange data
+# rid of all days except 5
+filtered_data <- new |>
+  filter(STDYDAY.x == 5)
+```
+
+```{r}
+#| label: rearrange2
+filtered_data <- filtered_data |>
+  distinct(PATIENT, STDYDAY.x, .keep_all = TRUE) |>
+  filter(!is.na(PupilDilationScore) & !is.na(TempScore) & !is.na(RespirationScore) & !is.na(SYSScore) & !is.na(WeightScore))
+```
+
+```{r}
+#| label: newdatasets
+IMC21 <- read.csv("archive/data/CSV/IMC21.csv")
+IMC01 <- read.csv("archive/data/CSV/IMC01.csv")
+IMCENR <- read.csv("archive/data/CSV/IMCENR.csv")
+
+IMC21<-IMC21 |> filter(A_MED != 2 & B_MED != 2 & C_MED != 2 & D_MED != 2 & E_MED != 2 & F_MED != 2 & G_MED != 2) |>  filter(STDYDAY == 10) 
+```
+
+```{r}
+final_data <- inner_join(filtered_data, IMCENR, by = "PATIENT")
+
+final_data <- inner_join(final_data, IMC01, by = "PATIENT")
+
+```
+
+# 1 Introduction
+
+Opioid dependency is a chronic and relapsing condition characterized by compulsive opioid use. According to the World Health Organization, approximately 125,000 people have died of opioid overdose in 2019 and 80% of drug-related deaths have been due to opioids (World Health Organization). Opioid dependence also carries a heavy burden on individual health. Chronic use can lead to physiological problems including respiratory depression, organ damage, and an increased risk of contracting infectious diseases such as HIV/AIDS due to risky injection practices. Furthermore, individuals dependence on opioids have faced psychological tolls with many often experiencing anxiety, depression, and impaired cognitive function. 
+
+Lofexidine, an alpha-2-adrenergic receptor agonist, originally developed as an anti-hypertensive, has been repurposed to relieve opioid withdrawal symptoms. Lofexidine provides a non-opioid alternative, potentially reducing risks of continued addiction that traditional treatments such as methadone and buprenorphine have had (Kaha et al., 1997). The treatment operates by managing noradrenaline release, which is believed to control the autonomic hyperactivity that characterizes opioid withdrawal. Dissimilar to clonidine, another alpha-2-adrenergic agonist, lofexidine presents a more advantageous safety profile, specifically concerning hypotensive effects, making it appropriate for a wider range of patients, including those with variable levels of cardiovascular risk. 
+
+A previous research study by Yu et. al. examined the efficacy of this drug, employing the Modified Himmelsbach Opiate Withdrawal Scale (MHOWS) score to assign point values to various withdrawal symptoms such as restlessness and anorexia. Opioid withdrawal is diagnosed based on criteria outlined in the Diagnostic and Statistical Manual of Mental Disorders, Fifth Edition (DSM-V), which includes symptoms like dysphoria, nausea, muscle aches, and insomnia (Doughty et al., 2019). A pivotal phase III study by Gorodetzky et al. (2017) illustrated that lofexidine significantly lowered opioid withdrawal symptoms compared to placebo. The trial, designed as an FDA registration trial, emphasized lofexidine's power to enhance treatment retention rates and decrease symptom severity effectively. Studies like Buntwal et al. (1999) have demonstrated that lofexidine, when used together with naltrexone, improves the efficiency of detoxification protocols without worsening withdrawal symptoms or hypotension, thus endorsing its use in accelerated detoxification plans. The study conducted by Gorodetzky et al. (2017) adjusted for potential confounders like baseline symptom severity and patient demographics. This analysis ensures that the observed effects of lofexidine are likely because of the medication itself rather than external variables, providing a dependable footing for its efficacy in clinical practice.
+
+Given lofexidine's origins as an anti-hypertensive, its influence on blood pressure is important. While it does reduce blood pressure, it does so to a lesser degree than clonidine, thus presenting a lower risk of significant hypotension. This facet is specifically critical in patients who are already at risk due to opioid-related cardiovascular instability. This background is critical as many withdrawal symptom scales, including the MHOWS scale utilized by Yu et. al. includes blood pressure as a variable. Thus, reassessing the role of systolic blood pressure in MHOWS scores for patients using lofexidine is critical in evaluating the drug's true potential. 
+
+# 2 Dataset Overview
+
+In their initial study, Yu et.al utilized an open data source titled NIDA-CSP-1020 collected by investigator Ann Montgomery, R.N., from the National Institute on Drug Abuse (part of the National Institutes of Health). Utilizing this, Yu evaluated the efficacy and tolerability of lofexidine for treating opioid withdrawal symptoms and involved 68 opioid-dependent participants who were randomized into either the lofexidine or placebo groups. The primary response variable as stated above was the Modified Himmelsbach Opiate Withdrawal Scale (MHOWS) score on study day 5, measuring the severity of opioid withdrawal symptoms. 
+
+The study was conducted in three phases:
+
+1.  On days 1-3, participants were stabilized on morphine sulfate to decrease respective baseline opioid levels.
+
+2.  On days 4-8, participants were administered either lofexidine or the placebo. Lofexidine was administered at 3.2 mg/day from days 4 to 7 and reduced to 1.6mg/day on day 8. This was done through tablets. 
+
+3.  From days 9 to 10, all participants received placebo pills and no drugs were administered on day 11 although the participants' statuses were recorded.
+
+During this time, the primary outcome measure for patients were with MHOWS scores on study day 5 with the baseline being calculated using day 1 and day 2 data (while the paper was inconsistent about whether the baseline was used calculating the average of day 2 and 3). Secondary outcome measures included dropout rates, peak MHOWS scores, other opioid withdrawal symptom scales (Objective Opiate Withdrawal Scale (OOWS), Short Opiate Withdrawal Scale (SOWS), Modified Clinical Global Impressions Scale (MCGI), Subjective Opiate Withdrawal Scale (SOWS-Handelsman), Visual Analog Scale Assessing Withdrawal Symptoms.
+
+For the purposes of our study, we decided to first take a look at the impact of blood pressure and how they compare in Total MHOWS scores when including and excluding blood pressure. We also found strong correlation in supporting literature for the number of cigarettes smoked and decided to include that with other relevant variables like age (Inoue-Choi M, 2019). The following equation provides the details our calculation of MHOWS score:
+
+(INSERT EQUATION)
+
+# 3 Exploratory Data Analysis
+
+```{r}
+IMC02 <- read.csv("archive/data/CSV/IMC02.csv") 
+```
+
+```{r}
+joinIMC02 <- inner_join(final_data, IMC02, by = "PATIENT")
+```
+
+```{r}
+mean_MHOWS_by_treatment <- joinIMC02 |>
+  group_by(TREATMNT) |>
+  summarise(mean_TotalMHOWS = mean(TotalMHOWS, na.rm = TRUE))
+```
+
+```{r}
+invisible(sum(joinIMC02$TotalMHOWS, na.rm = TRUE))
+invisible(sum(joinIMC02$TotalMHOWS_BP, na.rm = TRUE))
+```
+
+```{r}
+mean_MHOWS_by_treatment_BP <- joinIMC02 |>
+  group_by(TREATMNT) |>
+  summarise(mean_TotalMHOWS_BP = mean(TotalMHOWS_BP, na.rm = TRUE))
+```
+
+```{r}
+# Combine the data
+combined_data <- mean_MHOWS_by_treatment %>%
+  rename(mean_TotalMHOWS = mean_TotalMHOWS) %>%
+  inner_join(mean_MHOWS_by_treatment_BP %>%
+               rename(mean_TotalMHOWS_BP = mean_TotalMHOWS_BP),
+             by = "TREATMNT")
+
+# Reshape the data for plotting
+combined_data_long <- combined_data %>%
+  pivot_longer(cols = starts_with("mean"), names_to = "Metric", values_to = "Value") %>%
+  mutate(Metric = recode(Metric, 
+                         mean_TotalMHOWS = "TotalMHOWS without BP",
+                         mean_TotalMHOWS_BP = "TotalMHOWS with BP"))
+
+# Plot the data
+uselessedaplot <- ggplot(combined_data_long, aes(x = TREATMNT, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Average TotalMHOWS by Treatment Group with and without BP",
+       x = "Treatment Group",
+       y = "Average TotalMHOWS",
+       fill = "Metric") +
+  scale_fill_manual(values = c("#82CAFF", "#001A57")) +
+  theme_minimal()
+
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+# Assuming new is already loaded
+# Calculate average scores for each day
+avg_scores <- aggregate(cbind(TotalMHOWS, TotalMHOWS_BP) ~ STDYDAY.x, data = new, FUN = mean, na.rm = TRUE)
+
+# Melt the data for easier plotting
+avg_scores_long <- melt(avg_scores, id.vars = "STDYDAY.x", variable.name = "ScoreType", value.name = "AverageScore")
+
+# Create the plot
+edaplota <- ggplot(avg_scores_long, aes(x = STDYDAY.x, y = AverageScore, color = ScoreType, group = ScoreType)) +
+  geom_line(size = 1) +  # Increase line size for better visibility
+  geom_point(size = 2) +  # Increase point size for better visibility
+  theme_minimal(base_size = 15) +  # Set base font size for better readability
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),  # Center and bold the title
+    axis.title.x = element_text(face = "bold"),  # Bold x-axis title
+    axis.title.y = element_text(face = "bold"),  # Bold y-axis title
+    legend.title = element_text(face = "bold"),  # Bold legend title
+    legend.position = "right",  # Position legend on the right
+    legend.text = element_text(size = 10),
+    legend.background = element_rect(fill = "white", size = 0.5, linetype = "solid", color = "black")
+  ) +
+  labs(
+    title = "Average MHOWS by Study Day",
+    x = "Study Day",
+    y = "Average Score",
+    color = "Score Type"
+  ) +
+  scale_color_manual(values = c("TotalMHOWS" = "blue", "TotalMHOWS_BP" = "green"))  # Set custom colors for better distinction
+
+# Display the plot
+print(edaplota)
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+# Assuming new is already loaded
+# Calculate average scores for each day
+avg_scores <- aggregate(cbind(TotalMHOWS, TotalMHOWS_BP, TempScore, WeightScore, RespirationScore, PupilDilationScore, SYSScore) ~ STDYDAY.x, data = new, FUN = mean, na.rm = TRUE)
+
+# Melt the data for easier plotting
+avg_scores_long <- melt(avg_scores, id.vars = "STDYDAY.x", variable.name = "ScoreType", value.name = "AverageScore")
+
+# Define custom colors
+custom_colorsXX <- c("TotalMHOWS" = "cyan", "TotalMHOWS_BP" = "skyblue", "PupilDilationScore" = "red", 
+                     "TempScore" = "grey70", "RespirationScore" = "grey70", "SYSScore" = "green", "WeightScore" = "grey70")
+
+# Create the plot
+publication_plot <- ggplot(avg_scores_long, aes(x = STDYDAY.x, y = AverageScore, color = ScoreType, group = ScoreType)) +
+  geom_line(size = 1) +  # Increase line size for better visibility
+  geom_point(size = 2) +  # Increase point size for better visibility
+  theme_minimal(base_size = 15) +  # Set base font size for better readability
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),  # Center and bold the title
+    axis.title.x = element_text(face = "bold"),  # Bold x-axis title
+    axis.title.y = element_text(face = "bold"),  # Bold y-axis title
+    legend.title = element_text(face = "bold"),  # Bold legend title
+    legend.position = "right",  # Position legend on the right
+    legend.text = element_text(size = 10),
+    legend.background = element_rect(fill = "white", size = 0.5, linetype = "solid", color = "black")
+  ) +
+  scale_color_manual(values = custom_colorsXX) +  # Apply custom colors
+  labs(
+    title = "Average MHOWS and \n Continuous Variables",
+    x = "Study Day",
+    y = "Average Score",
+    color = "Score Type"
+  )
+
+# Display the plot
+print(publication_plot)
+
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(cowplot)
+library(reshape2)
+
+# Assuming new is already loaded
+# Calculate average scores for each day
+avg_scores <- aggregate(cbind(TotalMHOWS, TotalMHOWS_BP, Yawning, Emesis_Score, Anorexia, Restlessness, Tremor, Goose_flesh, Lacrimation, Rhinorrhea, Perspiration) ~ STDYDAY.x, data = new, FUN = mean, na.rm = TRUE)
+
+# Melt the data for easier plotting
+avg_scores_long <- melt(avg_scores, id.vars = "STDYDAY.x", variable.name = "ScoreType", value.name = "AverageScore")
+
+# Define custom colors
+custom_colorsXY <- c("TotalMHOWS" = "cyan", "TotalMHOWS_BP" = "skyblue", "Yawning" = "grey70", 
+                     "Anorexia" = "grey70", "Restlessness" = "grey70", "Emesis_Score" = "green", 
+                     "Tremor" = "grey70", "Goose_flesh" = "grey70", "Lacrimation" = "grey70", 
+                     "Rhinorrhea" = "grey70", "Perspiration" = "grey70")
+
+# Create the plot
+edaplota <- ggplot(avg_scores_long, aes(x = STDYDAY.x, y = AverageScore, color = ScoreType, group = ScoreType)) +
+  geom_line(size = 1) +  # Increase line size for better visibility
+  geom_point(size = 2) +  # Increase point size for better visibility
+  theme_minimal(base_size = 15) +  # Set base font size for better readability
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),  # Center and bold the title
+    axis.title.x = element_text(face = "bold"),  # Bold x-axis title
+    axis.title.y = element_text(face = "bold"),  # Bold y-axis title
+    legend.title = element_text(face = "bold"),  # Bold legend title
+    legend.position = "right",  # Position legend on the right
+    legend.text = element_text(size = 10),
+    legend.background = element_rect(fill = "white", size = 0.5, linetype = "solid", color = "black")
+  ) +
+  scale_color_manual(values = custom_colorsXY) +  # Apply custom colors
+  labs(
+    title = "Average MHOWS and \n Noncontinuous Variables",
+    x = "Study Day",
+    y = "Average Score",
+    color = "Score Type"
+  )
+
+centered_plot <- plot_grid(edaplota, align = 'h', axis = 't')
+print(centered_plot)
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(reshape2)
+
+# Assuming new is already loaded
+# Calculate average scores for each day
+avg_scores <- aggregate(cbind(TotalMHOWS, TotalMHOWS_BP, PupilDilationScore, TempScore, RespirationScore, 
+                              WeightScore, Yawning, Emesis_Score, Anorexia, Restlessness, Tremor, 
+                              Goose_flesh, Lacrimation, Rhinorrhea, Perspiration, SYSScore) ~ STDYDAY.x, 
+                        data = new, FUN = mean, na.rm = TRUE)
+
+# Melt the data for easier plotting
+avg_scores_long <- melt(avg_scores, id.vars = "STDYDAY.x", variable.name = "ScoreType", value.name = "AverageScore")
+
+# Define custom colors
+custom_colors <- c("TotalMHOWS" = "cyan", "TotalMHOWS_BP" = "skyblue", "PupilDilationScore" = "grey70", 
+                   "TempScore" = "grey70", "RespirationScore" = "grey70", "SYSScore" = "red", "WeightScore" = "grey70",
+                   "Yawning" = "grey70", "Emesis_Score" = "grey70", "Anorexia" = "grey70", "Restlessness" = "grey70", 
+                   "Tremor" = "grey70", "Goose_flesh" = "grey70", "Lacrimation" = "grey70", "Rhinorrhea" = "grey70", 
+                   "Perspiration" = "grey70")
+
+# Filter the data to include only the variables we want in the legend for legend labeling
+avg_scores_long_filtered <- avg_scores_long[avg_scores_long$ScoreType %in% c("TotalMHOWS", "TotalMHOWS_BP", "SYSScore"), ]
+
+# Create the plot
+publication_plot <- ggplot(avg_scores_long, aes(x = STDYDAY.x, y = AverageScore, color = ScoreType, group = ScoreType)) +
+  geom_line(size = 1) +  # Increase line size for better visibility
+  geom_point(size = 2) +  # Increase point size for better visibility
+  theme_minimal(base_size = 15) +  # Set base font size for better readability
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),  # Center and bold the title
+    axis.title.x = element_text(face = "bold"),  # Bold x-axis title
+    axis.title.y = element_text(face = "bold"),  # Bold y-axis title
+    legend.title = element_text(face = "bold"),  # Bold legend title
+    legend.position = "right",  # Position legend on the right
+    legend.text = element_text(size = 10),
+    legend.background = element_rect(fill = "white", size = 0.5, linetype = "solid", color = "black")
+  ) +
+  scale_color_manual(values = custom_colors, 
+                     breaks = c("TotalMHOWS", "TotalMHOWS_BP", "SYSScore")) +  # Apply custom colors and filter legend labels
+  labs(
+    title = "Systolic Blood Pressure \n and MHOWS",
+    x = "Study Day",
+    y = "Average Score",
+    color = "Score Type"
+  )
+
+# Display the plot
+print(publication_plot)
+```
+
+```{r}
+IMC03 <- read_csv("archive/data/CSV/IMC03.csv")
+```
+
+```{r}
+joinIMC03 <- inner_join(final_data, IMC03, by = "PATIENT")
+```
+
+```{r}
+IMC12 <- read_csv("archive/data/CSV/IMC12.csv")
+```
+
+```{r}
+joinIMC12 <- inner_join(final_data, IMC12, by = "PATIENT")
+```
+
+```{r}
+IMC20 <- read_csv("archive/data/CSV/IMC20.csv")
+```
+
+```{r}
+joinIMC20 <- inner_join(joinIMC03, IMC20, by = "PATIENT")
+```
+
+```{r}
+m2 <- lm(TotalMHOWS ~ TREATMNT + Q26A + Q2DATE + LENGTH, data = joinIMC20)
+```
+
+```{r}
+m2 <- lm(TotalMHOWS_BP ~ TREATMNT + Q26A + Q2DATE + LENGTH, data = joinIMC20)
+```
+
+```{r}
+m3 <- lm(TotalMHOWS_BP ~ TREATMNT + Q26A + Q2DATE + Q26A*Q2DATE, data = joinIMC20)
+```
+
+```{r}
+IMC27 <- read_csv("archive/data/CSV/IMC27.csv")
+IMC27 <- IMC27 |>
+  filter(STDYDAY == 5) |> 
+  mutate(
+    numNic = Q4,
+    numCigs = Q3A
+  ) |> 
+  filter(!is.na(numNic) & !is.na(numCigs) )
+
+```
+
+```{r}
+joinIMC27 <- inner_join(IMC27, joinIMC20, by = "PATIENT")
+joinIMC27 <- joinIMC27 |> 
+  rename(treatmentGroup = TREATMNT,
+         yearsSmoking = Q26A, 
+         age = Q2DATE)
+```
+
+```{r}
+library(gridExtra)
+```
+
+```{r}
+IMC15 <- read.csv("archive/data/CSV/IMC15.csv") 
+IMCENR <- read.csv("archive/data/CSV/IMCENR.csv")
+objscaledata <- inner_join(IMC15, IMCENR, by = "PATIENT")
+```
+
+Objective Opiate Withdrawal Scale
+
+```{r}
+filtered_objscaledata <- objscaledata 
+
+objscalevariables <- c("Q1.x", "Q2", "Q3.x", "Q4.x", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13")
+filtered_objscaledata <- filtered_objscaledata %>%
+  filter(!if_any(all_of(objscalevariables), is.na))
+
+filtered_objscaledata$objscalescore <- 0
+
+for (var in objscalevariables) {
+  filtered_objscaledata <- filtered_objscaledata %>%
+    mutate(objscalescore = objscalescore + if_else(get(var) != 1, 1, 0))
+}
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+
+# Assuming avg_scores is already loaded
+# Calculate average scores for each day
+avg_scores <- aggregate(objscalescore ~ STDYDAY + TREATMNT, data = filtered_objscaledata, FUN = mean, na.rm = TRUE)
+
+# Create the plot
+otherscaleplot1 <- ggplot(avg_scores, aes(x = STDYDAY, y = objscalescore, color = TREATMNT, group = TREATMNT)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(
+    x = "Study Day",
+    color = "Treatment Group"
+  ) +
+  theme(
+    axis.title.y = element_blank(),  # Remove y-axis title
+    axis.text.y = element_blank(),  # Remove y-axis numbers
+    axis.ticks.y = element_blank(), # Remove y-axis ticks
+        legend.position = "none"  # Remove legend
+
+  )
+
+```
+
+Short Opiate Withdrawal Scale
+
+```{r}
+IMC16 <- read.csv("archive/data/CSV/IMC16.csv") 
+IMCENR <- read.csv("archive/data/CSV/IMCENR.csv")
+shortopiatescale <- inner_join(IMC16, IMCENR, by = "PATIENT")
+```
+
+```{r}
+opiatescalevariables <- c("Q1.x", "Q2", "Q3.x", "Q4.x", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10")
+filtered_shortopiatescale <- shortopiatescale %>%
+  filter(!if_any(all_of(opiatescalevariables), is.na))
+filtered_shortopiatescale$opiatescalescore <- 0
+
+filtered_shortopiatescale <- filtered_shortopiatescale %>%
+  rowwise() %>%
+  mutate(opiatescalescore = sum(c_across(all_of(opiatescalevariables))))
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+
+# Assuming avg_scores is already loaded
+# Calculate average scores for each day
+avg_scores <- aggregate(opiatescalescore ~ STDYDAY + TREATMNT, data = filtered_shortopiatescale, FUN = mean, na.rm = TRUE)
+
+# Create the plot
+otherscaleplot2 <- ggplot(avg_scores, aes(x = STDYDAY, y = opiatescalescore, color = TREATMNT, group = TREATMNT)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(
+    x = "Study Day"
+  ) +
+  theme(
+    axis.title.y = element_blank(),  # Remove y-axis title
+    axis.text.y = element_blank(),  # Remove y-axis numbers
+    axis.ticks.y = element_blank(),  # Remove y-axis ticks
+        legend.position = "bottom"  # Move legend to the bottom
+
+  )
+```
+
+Subjective Opiate Withdrawal Scale
+
+```{r}
+IMC19 <- read.csv("archive/data/CSV/IMC16.csv") 
+IMCENR <- read.csv("archive/data/CSV/IMCENR.csv")
+subjectiveopiatescale <- inner_join(IMC19, IMCENR, by = "PATIENT")
+```
+
+```{r}
+
+filtered_subjectiveopiatescale <- objscaledata 
+
+opiatescalevariables <- c("Q1.x", "Q2", "Q3.x", "Q4.x", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10")
+
+filtered_subjectiveopiatescale <- filtered_subjectiveopiatescale %>%
+  filter(!if_any(all_of(opiatescalevariables), is.na))
+
+filtered_subjectiveopiatescale$subscalescore <- 0
+
+for (var in opiatescalevariables) {
+  filtered_subjectiveopiatescale <- filtered_subjectiveopiatescale %>%
+    mutate(subscalescore = subscalescore + if_else(get(var) != 1, 1, 0))
+}
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+
+# Assuming avg_scores is already loaded
+# Calculate average scores for each day
+avg_scores <- aggregate(subscalescore ~ STDYDAY + TREATMNT, data = filtered_subjectiveopiatescale, FUN = mean, na.rm = TRUE)
+
+# Create the plot
+otherscaleplot3 <- ggplot(avg_scores, aes(x = STDYDAY, y = subscalescore, color = TREATMNT, group = TREATMNT)) +
+  geom_line() +
+  geom_point() +
+  theme_minimal() +
+  labs(
+    x = "Study Day"
+  ) +
+  theme(
+    axis.title.y = element_blank(),  # Remove y-axis title
+    axis.text.y = element_blank(),  # Remove y-axis numbers
+    axis.ticks.y = element_blank(),  # Remove y-axis ticks
+    legend.position = "none"  # Remove legend
+
+  )
+
+```
+
+```{r}
+plot_grid(otherscaleplot1 + otherscaleplot2 + otherscaleplot3)
+```
+
+# 3 Methodology
+
+```{r}
+model_fit1 <- linear_reg() |>
+  set_engine("lm") |>
+  fit(TotalMHOWS ~ PupilDilationScore + WeightScore, data = final_data)
+```
+
+```{r}
+model_fit2 <- linear_reg() |>
+  set_engine("lm") |>
+  fit(TotalMHOWS ~ PupilDilationScore + TempScore + WeightScore, data = final_data)
+```
+
+```{r}
+model_fit3 <- linear_reg() |>
+  set_engine("lm") |>
+  fit(TotalMHOWS ~ PupilDilationScore + TempScore + WeightScore + RespirationScore, data = final_data)
+```
+
+```{r}
+model_fit4 <- linear_reg() |>
+  set_engine("lm") |>
+  fit(TotalMHOWS ~ PupilDilationScore + TempScore + WeightScore + RespirationScore + SYSScore, data = final_data)
+```
+
+```{r}
+set.seed(6)
+
+data_split <- initial_split(final_data, prop = 0.75)
+data_train <- training(data_split)
+data_test <- testing(data_split)
+```
+
+```{r}
+set.seed(6)
+cross_folds <- vfold_cv(data_train, v = 12)
+```
+
+```{r}
+model_spec <- linear_reg() |>
+  set_engine("lm") |>
+  set_mode("regression")
+```
+
+#MODEL 1
+
+```{r}
+model1_recipe <- recipe(TotalMHOWS ~ PupilDilationScore + WeightScore, data = final_data)
+```
+
+```{r}
+model1_w1 <- workflow() |>
+  add_recipe(model1_recipe) |>
+  add_model(model_spec)
+```
+
+```{r}
+cross_v <- fit_resamples(model1_w1, cross_folds)
+```
+
+```{r}
+rmse_val1 <- cross_v |>
+  collect_metrics() |>
+  filter(.metric == "rmse")
+```
+
+```{r}
+rsq_val1 <- cross_v |>
+  collect_metrics() |>
+  filter(.metric == "rsq")
+```
+
+#MODEL 2
+
+```{r}
+model2_recipe <- recipe(TotalMHOWS ~ PupilDilationScore + TempScore + WeightScore, data = final_data)
+```
+
+```{r}
+model_w2 <- workflow() |>
+  add_recipe(model2_recipe) |>
+  add_model(model_spec)
+```
+
+```{r}
+cross_v2 <- fit_resamples(model_w2, cross_folds)
+```
+
+```{r}
+rmse_val2 <- cross_v2 |>
+  collect_metrics() |>
+  filter(.metric == "rmse")
+```
+
+```{r}
+rsq_val2 <- cross_v2 |>
+  collect_metrics() |>
+  filter(.metric == "rsq")
+```
+
+#MODEL 3
+
+```{r}
+model3_recipe <- recipe(TotalMHOWS ~ PupilDilationScore + TempScore + WeightScore + RespirationScore, data = final_data)
+```
+
+```{r}
+model_w3 <- workflow() |>
+  add_recipe(model3_recipe) |>
+  add_model(model_spec)
+```
+
+```{r}
+cross_v3 <- fit_resamples(model_w3, cross_folds)
+```
+
+```{r}
+rmse_val3 <- cross_v3 |>
+  collect_metrics() |>
+  filter(.metric == "rmse")
+```
+
+```{r}
+rsq_val3 <- cross_v3 |>
+  collect_metrics() |>
+  filter(.metric == "rsq")
+```
+
+#MODEL 4
+
+```{r}
+model4_recipe <- recipe(TotalMHOWS ~ PupilDilationScore + TempScore + WeightScore + RespirationScore + SYSScore , data = final_data)
+```
+
+```{r}
+model_w4 <- workflow() |>
+  add_recipe(model4_recipe) |>
+  add_model(model_spec)
+```
+
+```{r}
+cross_v4 <- fit_resamples(model_w4, cross_folds)
+```
+
+```{r}
+rmse_val4 <- cross_v4 |>
+  collect_metrics() |>
+  filter(.metric == "rmse")
+```
+
+```{r}
+rsq_val4 <- cross_v4 |>
+  collect_metrics() |>
+  filter(.metric == "rsq")
+```
+
+```{r}
+aic_bic_summary <- bind_rows(
+  glance(model_fit1) |> select(AIC, BIC) |> mutate(Model = "Model 1"),
+  glance(model_fit2) |> select(AIC, BIC) |> mutate(Model = "Model 2"),
+  glance(model_fit3) |> select(AIC, BIC) |> mutate(Model = "Model 3"),
+  glance(model_fit4) |> select(AIC, BIC) |> mutate(Model = "Model 4")
+)
+```
+
+## Multiple Linear Regression Models
+
+In order to assess the influence of blood pressure in MHOWS, we decided to set up two multiple linear regression models.
+
+In the first multiple linear regression model, we used the weight score as a constant across the models and applied each one of the remaining four continuous variables as predictor variable.
+
+In the second multiple linear regression model, we ran four different types of regression models to specifically target systolic blood pressure: basic multiple linear regression, a model with interaction terms, a model with polynomial term for systolic blood pressure, and a model with lasso regulation.
+
+### Predictor Variables
+
+SYSScore - Changes in systolic blood pressure (SYS). 1 point for each 2 mm Hg. rise (up to 30 mm).
+
+PupilDilationScore - 1 point for each 0.1 mm increase in pupil size.
+
+TempScore - 1 point for each 0.1 degree C. rise.
+
+RespirationScore - 1 point for each respiration per minute increase.
+
+WeightScore - 1 point for each 2 mm Hg. rise (up to 30 mm). Weight 1 point for each pound loss.
+
+## Generalized Multiple Linear Regression Model
+
+We created four models based on the five discontinuous variables:
+
+Model 1: PupilDilation + Weight
+
+Model 2: Temperature + Weight
+
+Model 3: Respiration + Weight
+
+Model 4: Systolic Blood Pressure + Weight
+
+### Cross-Validation
+
+```{r}
+aic_bic_summary |>
+  mutate(
+    RMSE = c(6.982006, 5.02889, 7.435508, 7.595011),
+    "$R^2$" = c(0.1880592, 0.5766115, 0.08815833, 0.0461271)
+    ) |>
+  select("Model", "RMSE", "$R^2$", "AIC", "BIC") |>
+  kable(escape = FALSE, caption = "Cross-Validation Summary Statistics")
+```
+
+# 5 Results
+
+### Final Model
+
+```{r}
+finaldata_fit <- linear_reg() |>
+  set_engine("lm") |>
+  fit(TotalMHOWS ~ SYSScore + PupilDilationScore + TempScore + RespirationScore + WeightScore, 
+      data = final_data)
+
+tidy(finaldata_fit) |>
+  kable(digits = 3)
+```
+
+### Test Statistics
+
+```{r}
+data_test_pred <- predict(finaldata_fit, data_test) |>
+  bind_cols(data_test)
+
+bind_rows(rsq(data_test_pred, truth = TotalMHOWS, estimate = .pred), rmse(data_test_pred, truth = TotalMHOWS, estimate = .pred)) |>
+  kable(caption = "Test Set Statistics")
+
+```
+
+## Targetted Multiple Linear Regression Model
+
+Here, we created four different linear regression models.
+
+**Model 1 - Basic**
+
+We made this a basic multiple linear regression model that accounted for the 5 different types of continuous variable. This is meant to serve as a baseline.
+
+**Model 2 - Interaction Terms**
+
+This model capturse how the effect of one predictor depends on the level of another predictor. We included interaction terms, allowing the effect of one predictor to vary based on another predictor's value.
+
+**Model 3 - Polynomial Term**
+
+We wanted to explore non-linear relationships between predictors and the outcome We did this by adding polynomial terms (e.g., squared terms) for predictors, allowing the model to capture curvature in relationships.
+
+**Model 4 - Lasso Regularization**
+
+We did this to prevent overfitting and perform variable selection to identify most important predictors. Lasso adds a penalty to the regression for having too many predictors and will shrink some coefficinets to zero, effectively excluding less important variables.
+
+```{r}
+library(glmnet) 
+
+clean_data <- final_data[complete.cases(final_data[c("TotalMHOWS", "TempScore", "SYSScore", "WeightScore", "RespirationScore", "PupilDilationScore")]), ]
+
+# Basic Multiple Linear Regression Model
+basic_model <- lm(TotalMHOWS ~ TempScore + SYSScore + WeightScore + RespirationScore + PupilDilationScore, data = clean_data)
+
+# Model with Interaction Terms
+interaction_model <- lm(TotalMHOWS ~ TempScore * SYSScore + WeightScore * SYSScore + RespirationScore * SYSScore + PupilDilationScore, data = clean_data)
+
+# Model with Polynomial Term for Systolic Blood Pressure
+poly_model <- lm(TotalMHOWS ~ TempScore + SYSScore + I(SYSScore^2) + WeightScore + RespirationScore + PupilDilationScore, data = clean_data)
+
+# Model with Lasso Regularization
+x <- model.matrix(TotalMHOWS ~ TempScore + SYSScore + WeightScore + RespirationScore + PupilDilationScore, clean_data)[, -1]
+y <- clean_data$TotalMHOWS
+
+# Fit the Lasso model
+lasso_model <- cv.glmnet(x, y, alpha = 1)
+lasso_coefs <- coef(lasso_model, s = "lambda.min")
+selected_predictors <- names(which(lasso_coefs != 0))[-1]
+if(length(selected_predictors) > 0) {
+  lasso_formula <- as.formula(paste("TotalMHOWS ~", paste(selected_predictors, collapse = "+")))
+  lasso_summary <- summary(lm(lasso_formula, data = clean_data))
+  print(lasso_summary)
+}
+```
+
+```{r}
+library(glmnet) 
+
+clean_data <- final_data[complete.cases(final_data[c("TotalMHOWS", "TempScore", "SYSScore", "WeightScore", "RespirationScore", "PupilDilationScore")]), ]
+
+# Helper function to calculate RMSE
+calc_rmse <- function(model, data) {
+  sqrt(mean(residuals(model)^2))
+}
+
+# Basic Multiple Linear Regression Model
+basic_model <- lm(TotalMHOWS ~ TempScore + SYSScore + WeightScore + RespirationScore + PupilDilationScore, data = clean_data)
+basic_summary <- summary(basic_model)
+basic_rsq <- basic_summary$r.squared
+basic_rmse <- calc_rmse(basic_model, clean_data)
+
+# Model with Interaction Terms
+interaction_model <- lm(TotalMHOWS ~ TempScore * SYSScore + WeightScore * SYSScore + RespirationScore * SYSScore + PupilDilationScore, data = clean_data)
+interaction_summary <- summary(interaction_model)
+interaction_rsq <- interaction_summary$r.squared
+interaction_rmse <- calc_rmse(interaction_model, clean_data)
+
+# Model with Polynomial Term for Systolic Blood Pressure
+poly_model <- lm(TotalMHOWS ~ TempScore + SYSScore + I(SYSScore^2) + WeightScore + RespirationScore + PupilDilationScore, data = clean_data)
+poly_summary <- summary(poly_model)
+poly_rsq <- poly_summary$r.squared
+poly_rmse <- calc_rmse(poly_model, clean_data)
+
+# Model with Lasso Regularization
+x <- model.matrix(TotalMHOWS ~ TempScore + SYSScore + WeightScore + RespirationScore + PupilDilationScore, clean_data)[, -1]
+y <- clean_data$TotalMHOWS
+
+# Fit the Lasso model
+lasso_model <- cv.glmnet(x, y, alpha = 1)
+lasso_coefs <- coef(lasso_model, s = "lambda.min")
+
+# To display summary-like information for Lasso model
+selected_predictors <- names(which(lasso_coefs != 0))[-1]
+if(length(selected_predictors) > 0) {
+  lasso_formula <- as.formula(paste("TotalMHOWS ~", paste(selected_predictors, collapse = "+")))
+  lasso_model_final <- lm(lasso_formula, data = clean_data)
+  lasso_summary <- summary(lasso_model_final)
+  lasso_rsq <- lasso_summary$r.squared
+  lasso_rmse <- calc_rmse(lasso_model_final, clean_data)
+}
+```
+
+```{r}
+# THIS IS FOR PRINTING IT OUT
+if (!require(knitr)) install.packages("knitr")
+library(tidyverse)
+library(tidymodels)
+library(tidyr)
+
+modelx1 <- data.frame(
+  Term = c("Intercept", "Temperature", "Systolic Blood Pressure", "Weight", "Respiration", "Pupil Dilation"),
+  Estimate = c(24.5194106, 0.9979375, 0.0697278, 1.2814294, 1.0861859, -0.9746504),
+  StandardError = c(0.9577573, 0.0628869, 0.0887709, 0.1399364, 0.1549944, 0.1882161),
+  TValue = c(26.2143673, 15.8687565, 0.7854813, 9.1572263, 7.0079021, 5.1783570),
+  PValue = c("<0.01", "<0.01", 0.4385422, "<0.01", "<0.01", "<0.01")
+)
+knitr::kable(modelx1, format = "html", digits = 4)
+
+modelx2 <- data.frame(
+  Term = c("Intercept", "Temperature", "Systolic Blood Pressure", "Weight", "Respiration", "Pupil Dilation", "Temperature:SYS BP", "SYS BP:Weight", "SYS:Respiration"),
+  Estimate = c(25.3772594, 0.9118927, 0.1674698, 1.2251870, 1.3701136, 0.9188531, 0.0020288, -0.0098014, -0.2178612),
+  StandardError = c(0.9830368, 0.0765862, 0.1467207, 0.1703973, 0.1649048, 0.1719864, 0.0093503, 0.0253051, 0.0689428),
+  TValue = c(25.8151679, 11.9067543, 1.1414190, 7.1901776, 8.3085136, 5.3425905, 0.2169820, -0.3873279, -3.1600300),
+  PValue = c("<0.01", "<0.01", 0.26409, "<0.01", "<0.01", "<0.01", "<0.01", "<0.01", "<0.01")
+)
+knitr::kable(modelx2, format = "html", digits = 4)
+
+
+modelx3 <- data.frame(
+  Term = c("Intercept", "Temperature", "Systolic Blood Pressure", "I(SYSScore^2)","Weight", "Respiration", "Pupil Dilation"),
+  Estimate = c(25.3302080, 0.9635001, -0.2839751, 0.0290128, 1.2978817, -1.1069144, 0.9461279),
+  StandardError = c(0.9729634, 0.0695157, 0.3233583, 0.0255150, 0.1399847, 0.1552911, 0.1889450),
+  TValue = c(26.0340823, 13.8601744, -0.8782056, 1.1370843, 9.2715997, 7.1279950, 5.0074241),
+  PValue = c("<0.01", "<0.01", 0.3873062, 0.2651408, "<0.01", "<0.01", "<0.01")
+)
+knitr::kable(modelx3, format = "html", digits = 4)
+
+modelx4 <- data.frame(
+  Term = c("Intercept", "Temperature", "Systolic Blood Pressure", "Weight", "Respiration", "Pupil Dilation"),
+  Estimate = c(25.2728924, 1.0135788, 0.0313970, 1.2906613, 0.9411171, 0.9974161)
+)
+knitr::kable(modelx4, format = "html", digits = 4)
+
+
+```
+
+### Model Assumptions
+
+```{r}
+data_aug <- augment(finaldata_fit$fit)
+```
+
+```{r}
+resid_whole <- ggplot(data = data_aug, aes(x = .fitted, y = .resid)) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "Predicted values", y = "Residuals")
+
+resid_weight <- ggplot(data = data_aug, aes(x = WeightScore, y = .resid)) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "WeightScore", y = "Residuals")
+
+resit_sys <- ggplot(data = data_aug, aes(x = SYSScore, y = .resid)) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "SYSScore", y = "Residuals")
+
+resid_temp <- ggplot(data = data_aug, aes(x = TempScore, y = .resid)) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "TempScore", y = "Residuals")
+
+(resid_whole + resid_weight) / (resit_sys + resid_temp)
+
+```
+
+```{r}
+qq_plot <- ggplot(data = data_aug, aes(sample = .resid)) +
+  stat_qq(alpha = 0.7) +
+  stat_qq_line(color = "red", linetype = "dashed") +
+  labs(title = "Q-Q Plot", x = "Theoretical Quantiles", y = "Sample Quantiles")
+
+hist_plot <- ggplot(data = data_aug, aes(x = .resid)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "black", alpha = 0.7) +
+  geom_density(color = "red", linetype = "dashed") +
+  labs(title = "Histogram of Residuals", x = "Residuals", y = "Density")
+
+data_aug$order <- 1:nrow(data_aug)  
+order_plot <- ggplot(data = data_aug, aes(x = order, y = .resid)) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Residuals vs. Order", x = "Order", y = "Residuals")
+
+(qq_plot + hist_plot) / order_plot
+
+```
+
+```{r}
+# Diagnostic plots for the basic model
+par(mfrow = c(2, 2))  # Arrange plots in a 2x2 grid
+plot(basic_model, main = "Basic Model Diagnostics")
+
+# Diagnostic plots for the interaction model
+par(mfrow = c(2, 2))  # Arrange plots in a 2x2 grid
+plot(interaction_model, main = " Interaction Model Diagnostics")
+
+# Diagnostic plots for the polynomial model
+par(mfrow = c(2, 2))  # Arrange plots in a 2x2 grid
+plot(poly_model, main = "Polynomial Model Diagnostics")
+
+```
+
+# 6 Discussion
+
+### 6.1 Findings
+
+In the discussion of our findings, it's clear that the inclusion of systolic blood pressure in the Modified Himmelsbach Opiate Withdrawal Scale (MHOWS) calculations significantly impacts the assessment of lofexidine's effectiveness in alleviating opioid withdrawal symptoms. Our analysis supports the original study's findings that lofexidine, when considered with blood pressure metrics, significantly reduces MHOWS scores compared to a placebo. This suggests that lofexidine is effective in managing the physical symptoms associated with opioid withdrawal that influence blood pressure. However, a deeper analysis using two separate linear regression models---one including blood pressure in the MHOWS score and another excluding it---reveals a more nuanced picture. When compared to the results including the metric of blood pressure from the MHOWS calculations, the results excluding blood pressure leads to a phenomenon where the placebo group appears to fare better in terms of withdrawal symptom severity as measured by the MHOWS. This redefines previous findings about lofexidine's overall efficacy, suggesting that its primary impact may be on blood pressure reduction rather than a comprehensive alleviation of all opioid withdrawal symptoms.
+
+This finding is particularly relevant given lofexidine's historical use as an anti-hypertensive medication. The drug's ability to lower blood pressure might inadvertently contribute to its perceived efficacy in reducing opioid withdrawal symptoms. This could be misleading if the reduction in MHOWS scores is primarily driven by changes in blood pressure rather than a true mitigation of the broader spectrum of opioid withdrawal symptoms.
+
+### 6.2 Limitations
+
+Fundamentally, our approach to handling missing data may have led to some limitations. Although we initially aimed to determine why data was missing in certain areas, our approach later shifted into rendering the NA values insignificant through filtering. We identified distinct rows with the NA values then filtered out the distinct rows with the NA values to ensure only complete cases were considered in our analysis. However, by excluding missing data in specific columns, we expose ourselves to the danger of biases. The missing data was Missing not at Random (MNAR), which indicates that the probability of the data being missing is related to the value of the missing data itself. This suggests that if the missing data is not randomly distributed, or if more data was missing from a treatment group than from the control group, the results might not be comparable. For example, if patients with severe symptoms are more likely to have misplaced information, our way of dealing with missing data could have led to biases. 
+
+Additionally, we chose to only look at the MHOWS score on day 5. Our justification was based on the original study, also choosing to look at the MHOWS score on day 5; although day 5 provides a snapshot of opioid withdrawal during a critical period, it ignores the dynamic nature of symptoms. Symptoms relating to opioid withdrawal can fluctuate day-to-day, so focusing solely on a certain day can lead to misleading analysis about the treatment's effectiveness. Also, there may have been other variables that may have affected the MHOWS score that was not accounted for. With the total MHOWS score as our response variable, we selected predictors, including treatment, and also selected variables such as age, years of smoking, and number of cigarettes smoked on day 5 to account for confounding. However, there may be other unmeasured confounders such as medical history that may have affected our findings. 
+
+Finally, although we selected a linear regression model, it is unclear whether linear regression was the most appropriate model. The method of linear regression often assumes a linear relationship between predictors and the response variable, and is selected based on quantitative variables. However, we did not confirm these assumptions due to time constraints. Hence, we could have explored other modeling alternatives, like a residual versus fitted plot to check whether fitting a linear model was most appropriate. 
+
+### 6.3 Future Implications
+
+The implications of these findings are significant for clinical practice. While lofexidine clearly has a role in reducing certain symptoms of opioid withdrawal, its use as a standalone treatment could be reconsidered. Healthcare providers might need to combine lofexidine with other therapies that target a wider range of withdrawal symptoms to provide a more comprehensive treatment for opioid dependence. 
+
+Moreover, our results emphasize the importance of considering a wide range of variables when assessing treatment efficacy. The inclusion of additional predictors such as age, smoking history, and the number of cigarettes smoked on study Day 5 has highlighted the complex interplay of factors that can influence withdrawal experiences. This complexity underscores the need for tailored treatment approaches that consider individual patient profiles. In the future, further research should focus on longitudinal studies to evaluate the long-term outcomes of lofexidine treatment, particularly in relation to its effects on blood pressure and other withdrawal symptoms. Additionally, studies could explore the potential benefits of integrating lofexidine with other therapeutic interventions to enhance its efficacy and provide a more holistic approach to the management of opioid withdrawal. \
+
+# References
+
+Buntwal, N., Bearn, J., Gossop, M., & Strang, J. (2000). Naltrexone and lofexidine combination treatment compared with conventional lofexidine treatment for in-patient opiate detoxification. Drug and Alcohol Dependence, 59(2), 183--188. <https://doi.org/10.1016/s0376-8716(99)00116-7>
+
+Doughty, B., Morgenson, D., & Brooks, T. (2019). Lofexidine: A newly FDA-approved, nonopioid treatment for opioid withdrawal. Annals of Pharmacotherapy, 53(7), 746--753. <https://doi.org/10.1177/1060028019828954>
+
+Dydyk, A. M. (2024, January 17). Opioid use disorder. StatPearls \[Internet\]. <https://www.ncbi.nlm.nih.gov/books/NBK553166/>
+
+Gorodetzky, C. W., Walsh, S. L., Martin, P. R., Saxon, A. J., Gullo, K. L., & Biswas, K. (2017). A phase III, randomized, multi-center, Double Blind, Placebo controlled study of safety and efficacy of lofexidine for relief of symptoms in individuals undergoing inpatient opioid withdrawal. Drug and Alcohol Dependence, 176, 79--88. <https://doi.org/10.1016/j.drugalcdep.2017.02.020>
+
+Inoue-Choi M, Hartge P, Park Y, Abnet CC, Freedman ND. Association Between Reductions of Number of Cigarettes Smoked per Day and Mortality Among Older Adults in the United States. Am J Epidemiol. 2019;188(2):363-371. doi:10.1093/aje/kwy227 
+
+Kahn, A. (1997). Double-blind study of Lofexidine and clonidine in the detoxification of opiate addicts in hospital. Drug and Alcohol Dependence, 44(1), 57--61. <https://doi.org/10.1016/s0376-8716(96)01316-6>
+
+World Health Organization. (n.d.). Opioid overdose. World Health Organization. <https://www.who.int/news-room/fact-sheets/detail/opioid-overdose>
+
+YU, E., MIOTTO, K., AKERELE, E., MONTGOMERY, A., ELKASHEF, A., WALSH, R., MONTOYA, I., FISCHMAN, M., COLLINS, J., & MCSHERRY, F. (2008). A phase 3 placebo-controlled, double-blind, multi-site trial of the alpha-2-adrenergic agonist, Lofexidine, for opioid withdrawal☆. Drug and Alcohol Dependence, 97(1--2), 158--168. <https://doi.org/10.1016/j.drugalcdep.2008.04.002>
+
+\
